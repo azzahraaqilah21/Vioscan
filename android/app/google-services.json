@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "476553451524",
+    "project_id": "vioscan-bc-care",
+    "storage_bucket": "vioscan-bc-care.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:476553451524:android:83fcf48949eebf3151fd51",
+        "android_client_info": {
+          "package_name": "com.vioscan.vioscan_flutter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBauyg8fH7ZbbbRV1EWBaCJ3bb5uy_bSXc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -27,7 +27,7 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         
         // 2. UBAH LINE INI: Dari flutter.minSdkVersion diganti menjadi 23
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

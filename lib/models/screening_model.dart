@@ -33,6 +33,42 @@ class ScreeningModel {
     required this.userId,
   });
 
+  factory ScreeningModel.demo({
+    required double persentaseBcc,
+    required String status,
+    required DateTime waktuScan,
+  }) {
+    return ScreeningModel(
+      id: 'demo-screening',
+      screeningDate: waktuScan,
+      lesionLocation: 'Unknown',
+      lesionNotes: 'Demo screening data',
+      clinicalRiskAssessment: ClinicalRiskAssessmentModel(
+        age: 30,
+        gender: 'Unknown',
+        skinType: 'Type III',
+        dailyUvExposure: 'Moderate',
+        historyOfSunburn: 'No',
+        familyHistorySkinCancer: 'No',
+        previousSkinCancer: 'No',
+        outdoorOccupation: 'No',
+        immunosuppressiveCondition: 'No',
+      ),
+      prediction: status,
+      probabilities: {
+        'benign': 1 - (persentaseBcc / 100),
+        'malignant': persentaseBcc / 100,
+      },
+      confidence: persentaseBcc,
+      recommendation: 'Review required',
+      imageUrl: '',
+      fluorescenceImageUrl: '',
+      cnnModelVersion: 'demo',
+      createdAt: waktuScan,
+      userId: 'demo-user',
+    );
+  }
+
   Map<String, dynamic> toMap() => {
     'id': id,
     'screeningDate': screeningDate.toIso8601String(),

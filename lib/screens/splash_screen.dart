@@ -1,15 +1,18 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/screening_provider.dart';
+import '../models/screening_model.dart';
 
-class SplashScreen extends StatefulWidget {
+class SplashScreen extends ConsumerStatefulWidget {
   final Function(String) navigate;
   const SplashScreen({super.key, required this.navigate});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  ConsumerState<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen>
+class _SplashScreenState extends ConsumerState<SplashScreen>
     with TickerProviderStateMixin {
   late AnimationController _fadeController;
   late AnimationController _pulseController;
@@ -96,7 +99,6 @@ class _SplashScreenState extends State<SplashScreen>
         ),
         child: Stack(
           children: [
-            // Decorative background circles
             Positioned(
               top: -100,
               right: -80,
@@ -298,12 +300,12 @@ class _SplashScreenState extends State<SplashScreen>
               ),
             ),
             // Bottom elements
-            FadeTransition(
-              opacity: _bottomFade,
-              child: Positioned(
-                bottom: 90,
-                left: 0,
-                right: 0,
+            Positioned(
+              bottom: 90,
+              left: 0,
+              right: 0, 
+              child: FadeTransition(
+                opacity: _bottomFade,
                 child: Text(
                   'PKM-KC 2026 Innovation Project',
                   textAlign: TextAlign.center,
@@ -355,7 +357,24 @@ class _SplashScreenState extends State<SplashScreen>
               left: 0,
               right: 0,
               child: GestureDetector(
-                onTap: () => widget.navigate('dashboard'),
+                onTap: () {
+                  try {
+                    final dummyHasil = ScreeningModel.demo(
+                      persentaseBcc: 84.5,
+                      status: 'Indikasi Terdeteksi',
+                      waktuScan: DateTime.now(),
+                    );
+
+                    // 4. CARA TERBARU MEMPERBARUI DATA STATE MENGGUNAKAN RIVERPOD 👇
+                    ref.read(currentScreeningProvider.notifier).state = dummyHasil;
+
+                    print("⚡ Trigger data dummy terkirim menggunakan Riverpod!");
+                  } catch (e) {
+                    print("⚠️ Gagal memicu provider: $e");
+                  }
+
+                  widget.navigate('dashboard');
+                  },
                 child: Text(
                   'Tap to continue',
                   textAlign: TextAlign.center,

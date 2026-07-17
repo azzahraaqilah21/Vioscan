@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart'; // 1. Import library Firebase
+import 'firebase_options.dart'; // 2. Import file yang baru digenerate oleh CLI
 import 'screens/splash_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/skin_risk_assessment_screen.dart';
@@ -9,8 +11,13 @@ import 'screens/scan_history_screen.dart';
 import 'screens/device_info_screen.dart';
 import 'screens/emergency_assistance_screen.dart';
 
-void main() {
+void main() async { 
   WidgetsFlutterBinding.ensureInitialized();
+  
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -58,6 +65,8 @@ class _AppNavigatorState extends State<AppNavigator> {
     final isDark = ['splash', 'processing'].contains(screen);
     SystemChrome.setSystemUIOverlayStyle(
       SystemUiOverlayStyle(
+
+        
         statusBarColor: Colors.transparent,
         statusBarIconBrightness:
             isDark ? Brightness.light : Brightness.dark,

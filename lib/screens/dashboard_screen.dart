@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:intl/intl.dart';
 import '../widgets/bottom_nav.dart';
+import '../providers/auth_provider.dart';
+import '../providers/screening_provider.dart';
 
-class DashboardScreen extends StatefulWidget {
+class DashboardScreen extends ConsumerStatefulWidget {
   final Function(String) navigate;
   const DashboardScreen({super.key, required this.navigate});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen>
+class _DashboardScreenState extends ConsumerState<DashboardScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _dotController;
 
@@ -33,7 +38,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       'id': 'history',
       'icon': Icons.access_time_rounded,
       'label': 'Riwayat Skrining',
-      'desc': '8 total skrining',
+      'desc': 'Lihat histori',
       'color': const Color(0xFF0A858C),
       'bg': const Color(0xFFE6F7F7),
     },
@@ -41,31 +46,60 @@ class _DashboardScreenState extends State<DashboardScreen>
       'id': 'device',
       'icon': Icons.wifi_rounded,
       'label': 'VioTech',
-      'desc': 'Connected',
+      'desc': 'Info perangkat',
       'color': const Color(0xFF36B8B7),
       'bg': const Color(0xFFEBF9F9),
     },
     {
-      'id': 'assessment',
-      'icon': Icons.shield_rounded,
-      'label': 'Profil Risiko',
-      'desc': 'Risiko Rendah',
+      'id': 'about_bcc',
+      'icon': Icons.info_outline_rounded,
+      'label': 'About BCC',
+      'desc': 'Pelajari BCC',
       'color': const Color(0xFF0B757B),
       'bg': const Color(0xFFE4F6F6),
     },
     {
-      'id': 'emergency',
-      'icon': Icons.warning_amber_rounded,
-      'label': 'Emergency',
-      'desc': 'Hubungi bantuan',
-      'color': const Color(0xFFDC2626),
-      'bg': const Color(0xFFFEF2F2),
+      'id': 'profile',
+      'icon': Icons.person_rounded,
+      'label': 'Profil',
+      'desc': 'Akun saya',
+      'color': const Color(0xFF7C3AED),
+      'bg': const Color(0xFFF5F3FF),
     },
   ];
+
+  String _getGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Selamat pagi,';
+    if (hour < 17) return 'Selamat siang,';
+    return 'Selamat malam,';
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return '—';
+    return DateFormat('dd MMM yyyy · HH:mm').format(date);
+  }
 
   @override
   Widget build(BuildContext context) {
     final topPad = MediaQuery.of(context).padding.top;
+    final userAsync = ref.watch(currentUserProvider);
+    final statsAsync = ref.watch(userStatsProvider);
+
+    final displayName = userAsync.when(
+      data: (u) => u?.displayName ?? 'VioScan User',
+      loading: () => '...',
+      error: (_, __) => 'VioScan User',
+    );
+    final photoURL = userAsync.when(
+      data: (u) => u?.photoURL,
+      loading: () => null,
+      error: (_, __) => null,
+    );
+    final initials = displayName.isNotEmpty
+        ? displayName.trim().split(' ').map((w) => w[0]).take(2).join().toUpperCase()
+        : 'VS';
+
     return Container(
       color: const Color(0xFFF0FAFA),
       child: Column(
@@ -100,19 +134,20 @@ class _DashboardScreenState extends State<DashboardScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Selamat pagi,',
+                            _getGreeting(),
                             style: TextStyle(
                               color: Colors.white.withOpacity(0.65),
                               fontSize: 13,
                             ),
                           ),
-                          const Text(
-                            'Ahmad Rizki 👋',
-                            style: TextStyle(
+                          Text(
+                            '$displayName 👋',
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 22,
                               fontWeight: FontWeight.w700,
                             ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
@@ -128,32 +163,62 @@ class _DashboardScreenState extends State<DashboardScreen>
                           color: Colors.white, size: 18),
                     ),
                     const SizedBox(width: 10),
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(0.22),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.35),
-                          width: 2,
-                        ),
-                      ),
-                      child: const Center(
-                        child: Text(
-                          'AR',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
+                    // Avatar — tappable → profile
+                    GestureDetector(
+                      onTap: () => widget.navigate('profile'),
+                      child: Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withOpacity(0.22),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.35),
+                            width: 2,
                           ),
                         ),
+                        clipBehavior: Clip.hardEdge,
+                        child: photoURL != null
+                            ? CachedNetworkImage(
+                                imageUrl: photoURL,
+                                fit: BoxFit.cover,
+                                placeholder: (_, __) => Center(
+                                  child: Text(
+                                    initials,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                                errorWidget: (_, __, ___) => Center(
+                                  child: Text(
+                                    initials,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : Center(
+                                child: Text(
+                                  initials,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 18),
-                // Connection status
+                // Device connection status
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 16, vertical: 12),
@@ -319,130 +384,233 @@ class _DashboardScreenState extends State<DashboardScreen>
                       ),
                     ),
                   ),
-                  // Last Scan Summary
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    margin: const EdgeInsets.only(bottom: 14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
-                          blurRadius: 16,
-                          offset: const Offset(0, 2),
-                        )
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Text(
-                              'Skrining Terakhir',
-                              style: TextStyle(
-                                color: Color(0xFF0B757B),
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            GestureDetector(
-                              onTap: () => widget.navigate('result'),
-                              child: const Text(
-                                'Lihat Detail',
-                                style: TextStyle(
-                                  color: Color(0xFF36B8B7),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
+                  // Last Scan Summary (from Firestore)
+                  statsAsync.when(
+                    data: (stats) {
+                      final lastDate = stats['lastDate'] as DateTime?;
+                      final lastPrediction =
+                          stats['lastPrediction'] as String?;
+                      final lastLocation = stats['lastLocation'] as String?;
+                      final lastConfidence =
+                          stats['lastConfidence'] as double?;
+                      final count = stats['count'] as int? ?? 0;
+
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(bottom: 14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(22),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.06),
+                              blurRadius: 16,
+                              offset: const Offset(0, 2),
+                            )
                           ],
                         ),
-                        const SizedBox(height: 12),
-                        Row(
+                        child: Column(
                           children: [
-                            Container(
-                              width: 60,
-                              height: 60,
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  colors: [Color(0xFFA5E6E2), Color(0xFF77DAD7)],
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
+                            Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'Skrining Terakhir',
+                                  style: TextStyle(
+                                    color: Color(0xFF0B757B),
+                                    fontSize: 14.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                              child: const Icon(Icons.show_chart_rounded,
-                                  color: Color(0xFF0A858C), size: 26),
+                                if (lastDate != null)
+                                  GestureDetector(
+                                    onTap: () =>
+                                        widget.navigate('history'),
+                                    child: const Text(
+                                      'Lihat Histori',
+                                      style: TextStyle(
+                                        color: Color(0xFF36B8B7),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            const SizedBox(height: 12),
+                            if (lastDate == null)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 48,
+                                      height: 48,
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF3F4F6),
+                                        borderRadius:
+                                            BorderRadius.circular(16),
+                                      ),
+                                      child: const Icon(
+                                          Icons.history_rounded,
+                                          color: Color(0xFF9CA3AF),
+                                          size: 22),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Text(
+                                      'Belum ada skrining.\nMulai skrining pertama Anda.',
+                                      style: TextStyle(
+                                        color: Color(0xFF94A3B8),
+                                        fontSize: 12.5,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            else
+                              Row(
                                 children: [
-                                  const Text(
-                                    'Lengan Kiri',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                      color: Color(0xFF1F2937),
+                                  Container(
+                                    width: 60,
+                                    height: 60,
+                                    decoration: BoxDecoration(
+                                      gradient: const LinearGradient(
+                                        colors: [
+                                          Color(0xFFA5E6E2),
+                                          Color(0xFF77DAD7)
+                                        ],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                      borderRadius:
+                                          BorderRadius.circular(18),
                                     ),
+                                    child: const Icon(
+                                        Icons.show_chart_rounded,
+                                        color: Color(0xFF0A858C),
+                                        size: 26),
                                   ),
-                                  const Text(
-                                    '28 Mei 2026 · 10:32 WIB',
-                                    style: TextStyle(
-                                      color: Color(0xFF94A3B8),
-                                      fontSize: 11.5,
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          lastLocation ?? '—',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 14,
+                                            color: Color(0xFF1F2937),
+                                          ),
+                                        ),
+                                        Text(
+                                          _formatDate(lastDate),
+                                          style: const TextStyle(
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 11.5,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 5),
+                                        Row(
+                                          children: [
+                                            Container(
+                                              width: 7,
+                                              height: 7,
+                                              decoration: const BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: Color(0xFF0A858C),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 5),
+                                            Expanded(
+                                              child: Text(
+                                                lastPrediction ?? '—',
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Color(0xFF374151),
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                                overflow:
+                                                    TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            if (lastConfidence != null) ...[
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                'CNN: ${lastConfidence.toStringAsFixed(1)}%',
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                  color: Color(0xFF6B7280),
+                                                ),
+                                              ),
+                                            ]
+                                          ],
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Container(
-                                        width: 8,
-                                        height: 8,
-                                        decoration: const BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: Color(0xFF22C55E),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 5),
-                                      const Text(
-                                        'Risiko Rendah',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Color(0xFF374151),
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Container(
-                                        width: 3,
-                                        height: 3,
-                                        decoration: const BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: Color(0xFFE5E7EB),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      const Text(
-                                        'CNN: 92.4%',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Color(0xFF6B7280),
-                                        ),
-                                      ),
-                                    ],
                                   ),
                                 ],
                               ),
-                            ),
+                            if (count > 0) ...[
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 7),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE6F7F7),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Total skrining dilakukan',
+                                      style: TextStyle(
+                                        color: const Color(0xFF0A858C)
+                                            .withOpacity(0.75),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    Text(
+                                      '$count skrining',
+                                      style: const TextStyle(
+                                        color: Color(0xFF0A858C),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
-                      ],
+                      );
+                    },
+                    loading: () => Container(
+                      padding: const EdgeInsets.all(20),
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      child: const Center(
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Color(0xFF0A858C),
+                          ),
+                        ),
+                      ),
                     ),
+                    error: (_, __) => const SizedBox.shrink(),
                   ),
                   // Quick Access
                   const Text(
@@ -465,7 +633,8 @@ class _DashboardScreenState extends State<DashboardScreen>
                       return GestureDetector(
                         onTap: () => widget.navigate(card['id'] as String),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(16),

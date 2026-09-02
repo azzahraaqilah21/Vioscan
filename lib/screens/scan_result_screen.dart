@@ -1,17 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:math' as math;
+import '../providers/auth_provider.dart';
+import '../providers/screening_provider.dart';
+import '../models/screening_model.dart';
 
-class ScanResultScreen extends StatefulWidget {
+class ScanResultScreen extends ConsumerStatefulWidget {
   final Function(String) navigate;
   const ScanResultScreen({super.key, required this.navigate});
 
   @override
-  State<ScanResultScreen> createState() => _ScanResultScreenState();
+  ConsumerState<ScanResultScreen> createState() => _ScanResultScreenState();
 }
 
-class _ScanResultScreenState extends State<ScanResultScreen>
+class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
     with SingleTickerProviderStateMixin {
   String riskLevel = 'moderate';
+  bool _isSaved = false;
+  bool _isSaving = false;
   late AnimationController _arcController;
   late Animation<double> _arcAnimation;
 
@@ -19,32 +25,50 @@ class _ScanResultScreenState extends State<ScanResultScreen>
     'low': {
       'label': 'Risiko Rendah',
       'labelEn': 'Low Risk',
+      'suspect': 'Nevus (Normal)',
       'bg': const Color(0xFFECFDF5),
       'text': const Color(0xFF059669),
       'border': const Color(0xFFA7F3D0),
       'headerBg': [const Color(0xFF059669), const Color(0xFF10B981)],
       'icon': Icons.check_circle_rounded,
       'confidence': 94.1,
+      'probabilities': [
+        {'name': 'Nevus (Normal)', 'value': 94.1, 'color': const Color(0xFF059669)},
+        {'name': 'Basal Cell Carcinoma', 'value': 4.0, 'color': const Color(0xFFDC2626)},
+        {'name': 'Lainnya (SH, dll)', 'value': 1.9, 'color': const Color(0xFFD97706)},
+      ],
     },
     'moderate': {
       'label': 'Risiko Sedang',
       'labelEn': 'Moderate Risk',
+      'suspect': 'Sebaceous Hyperplasia',
       'bg': const Color(0xFFFFFBEB),
       'text': const Color(0xFFD97706),
       'border': const Color(0xFFFDE68A),
       'headerBg': [const Color(0xFFB45309), const Color(0xFFD97706)],
       'icon': Icons.error_rounded,
       'confidence': 78.1,
+      'probabilities': [
+        {'name': 'Sebaceous Hyperplasia', 'value': 78.1, 'color': const Color(0xFFD97706)},
+        {'name': 'Basal Cell Carcinoma', 'value': 16.8, 'color': const Color(0xFFDC2626)},
+        {'name': 'Nevus (Normal)', 'value': 5.1, 'color': const Color(0xFF059669)},
+      ],
     },
     'high': {
       'label': 'Risiko Tinggi',
       'labelEn': 'High Risk',
+      'suspect': 'Basal Cell Carcinoma',
       'bg': const Color(0xFFFEF2F2),
       'text': const Color(0xFFDC2626),
       'border': const Color(0xFFFECACA),
       'headerBg': [const Color(0xFF991B1B), const Color(0xFFDC2626)],
       'icon': Icons.warning_rounded,
       'confidence': 85.3,
+      'probabilities': [
+        {'name': 'Basal Cell Carcinoma', 'value': 85.3, 'color': const Color(0xFFDC2626)},
+        {'name': 'Nevus (Normal)', 'value': 9.0, 'color': const Color(0xFF059669)},
+        {'name': 'Lainnya (SH, dll)', 'value': 5.7, 'color': const Color(0xFFD97706)},
+      ],
     },
   };
 
@@ -194,8 +218,57 @@ class _ScanResultScreenState extends State<ScanResultScreen>
   }
 
   void setRisk(String level) {
-    setState(() => riskLevel = level);
+    setState(() {
+      riskLevel = level;
+      _isSaved = false;
+    });
     _arcController.forward(from: 0);
+  }
+
+  Future<void> _saveResult() async {
+    if (_isSaved || _isSaving) return;
+    setState(() => _isSaving = true);
+
+    try {
+      final user = ref.read(authStateProvider).value;
+      if (user == null) throw Exception('User not logged in');
+
+      final lesionInfo = ref.read(lesionInfoProvider);
+      final clinicalData = ref.read(clinicalAssessmentProvider);
+
+      final model = ScreeningModel.demo(
+        userId: user.uid,
+        lesionLocation: lesionInfo?.location ?? 'Lengan Kiri',
+        lesionNotes: lesionInfo?.notes,
+        clinicalRiskAssessment: clinicalData,
+        riskLevel: riskLevel,
+      );
+
+      final firestoreService = ref.read(firestoreServiceProvider);
+      await firestoreService.saveScreening(model);
+      
+      // Clear providers
+      ref.read(lesionInfoProvider.notifier).clear();
+      ref.read(clinicalAssessmentProvider.notifier).clear();
+      
+      // Refresh stats
+      ref.invalidate(userStatsProvider);
+      
+      setState(() => _isSaved = true);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Hasil berhasil disimpan!'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal menyimpan: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -613,6 +686,90 @@ class _ScanResultScreenState extends State<ScanResultScreen>
                     ],
                   ),
                   const SizedBox(height: 14),
+                  // Disease Probabilities Distribution
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    child: Container(
+                      key: ValueKey('$riskLevel-prob'),
+                      padding: const EdgeInsets.all(16),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.06),
+                            blurRadius: 12,
+                            offset: const Offset(0, 2),
+                          )
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Distribusi Probabilitas Penyakit',
+                            style: TextStyle(
+                              color: Color(0xFF1F2937),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Prediksi AI berdasarkan analisis pola fluorosensi',
+                            style: TextStyle(
+                              color: Color(0xFF94A3B8),
+                              fontSize: 10.5,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          ...(rc['probabilities'] as List).map((prob) {
+                            final val = prob['value'] as double;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 10),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(
+                                        prob['name'] as String,
+                                        style: const TextStyle(
+                                          color: Color(0xFF475569),
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+
+                                      Text(
+                                        '${val.toStringAsFixed(1)}%',
+                                        style: TextStyle(
+                                          color: prob['color'] as Color,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: val / 100,
+                                      backgroundColor: const Color(0xFFF1F5F9),
+                                      valueColor: AlwaysStoppedAnimation(prob['color'] as Color),
+                                      minHeight: 6,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ),
                   // Urgency banner
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
@@ -794,30 +951,159 @@ class _ScanResultScreenState extends State<ScanResultScreen>
                       }).toList(),
                     ),
                   ),
-                  // Evidence disclaimer
+                  // ── Panel Informasi 3 Jenis Penyakit Kulit ──────────────
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.06),
+                          blurRadius: 12,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFECFDF5),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: const Icon(Icons.biotech_rounded,
+                                    color: Color(0xFF059669), size: 18),
+                              ),
+                              const SizedBox(width: 10),
+                              const Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Kenali 3 Kondisi yang Diskrining',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13,
+                                      color: Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                  Text(
+                                    'Informasi Klinis · PERDOSKI & NCCN 2024',
+                                    style: TextStyle(
+                                      color: Color(0xFF94A3B8),
+                                      fontSize: 10,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                        // BCC
+                        _DiseaseInfoTile(
+                          color: const Color(0xFFDC2626),
+                          bgColor: const Color(0xFFFEF2F2),
+                          icon: Icons.warning_rounded,
+                          name: 'Basal Cell Carcinoma (BCC)',
+                          badge: 'RISIKO TINGGI',
+                          description:
+                              'Kanker kulit paling umum. Muncul di area yang sering terpapar sinar UV (wajah, hidung, telinga). Tanda khas: lesi berwarna mutiara/berkilap, tepi menggulung, atau tukak yang tidak sembuh.',
+                          treatment:
+                              'Dapat disembuhkan jika ditangani dini. Terapi: bedah eksisi, Mohs surgery, atau krioterapi.',
+                        ),
+                        const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                        // Nevus
+                        _DiseaseInfoTile(
+                          color: const Color(0xFF059669),
+                          bgColor: const Color(0xFFECFDF5),
+                          icon: Icons.check_circle_rounded,
+                          name: 'Nevus (Tahi Lalat Jinak)',
+                          badge: 'JINAK',
+                          description:
+                              'Lesi jinak berupa kumpulan sel melanosit. Biasanya berwarna cokelat/hitam seragam dengan tepi tegas. Tidak memerlukan pengobatan jika tidak ada perubahan ukuran, warna, atau bentuk.',
+                          treatment:
+                              'Pantau dengan metode ABCDE (Asymmetry, Border, Color, Diameter, Evolution). Konsultasi jika ada perubahan mendadak.',
+                        ),
+                        const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                        // SH
+                        _DiseaseInfoTile(
+                          color: const Color(0xFFD97706),
+                          bgColor: const Color(0xFFFFFBEB),
+                          icon: Icons.error_rounded,
+                          name: 'Hiperplasia Sebasea (SH)',
+                          badge: 'SEDANG',
+                          description:
+                              'Pembesaran kelenjar minyak yang jinak. Umum pada kulit berminyak dan orang dewasa >40 tahun. Tampak seperti papul kekuningan kecil dengan cekungan di tengah. Sering mirip BCC (doughnut sign).',
+                          treatment:
+                              'Jinak namun dapat menyerupai BCC. Konfirmasi dengan dermoskopi. Terapi estetika: electrodesiccation, laser CO₂, atau retinoid topikal.',
+                          isLast: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                  // ── Disclaimer Medis ─────────────────────────────────────
                   Container(
                     padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
+                      color: const Color(0xFFFFFBEB),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      border:
+                          Border.all(color: const Color(0xFFFDE68A), width: 1.5),
                     ),
-                    child: const Text(
-                      '📚 Berbasis Bukti: Rekomendasi ini disusun berdasarkan NCCN BCC Guidelines 2024, Pedoman Kanker Kulit Kemenkes RI 2022, EDF Guidelines 2023, PERDOSKI CPG 2021, Permenkes No. 5/2014, dan WHO Cancer Prevention 2023. BC-Care tidak menggantikan penilaian klinis dokter.',
-                      style: TextStyle(
-                        color: Color(0xFF475569),
-                        fontSize: 10.5,
-                        height: 1.55,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.gavel_rounded,
+                                size: 15, color: Color(0xFFD97706)),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'Disclaimer Medis',
+                              style: TextStyle(
+                                color: Color(0xFFD97706),
+                                fontWeight: FontWeight.w700,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Hasil analisis VioScan BC-Care bersifat SKRINING AWAL berbasis AI dan TIDAK dapat menggantikan diagnosis klinis dokter atau SpKK. Hasil ini hanya sebagai alat bantu puskesmas untuk menentukan prioritas rujukan.',
+                          style: TextStyle(
+                            color: Color(0xFF92400E),
+                            fontSize: 11,
+                            height: 1.6,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          '📚 Berbasis: NCCN BCC Guidelines 2024 · Kemenkes RI 2022 · PERDOSKI CPG 2021 · EDF Guidelines 2023',
+                          style: TextStyle(
+                            color: Color(0xFF78350F),
+                            fontSize: 10,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+
                   // Action buttons
                   Row(
                     children: [
                       Expanded(
                         child: GestureDetector(
-                          onTap: () => widget.navigate('history'),
+                          onTap: _isSaved ? null : _saveResult,
                           child: Container(
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             decoration: BoxDecoration(
@@ -826,10 +1112,15 @@ class _ScanResultScreenState extends State<ScanResultScreen>
                                 color: Color(0xFF0A858C),
                                 width: 2,
                               )),
+                              color: _isSaved ? const Color(0xFF0A858C).withOpacity(0.1) : Colors.transparent,
                             ),
-                            child: const Center(
-                              child: Text('Riwayat',
-                                style: TextStyle(
+                            child: Center(
+                              child: _isSaving 
+                                ? const SizedBox(
+                                    width: 18, height: 18, 
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0A858C)))
+                                : Text(_isSaved ? 'Tersimpan' : 'Simpan Hasil',
+                                style: const TextStyle(
                                   color: Color(0xFF0A858C),
                                   fontWeight: FontWeight.w700,
                                   fontSize: 13,
@@ -842,7 +1133,7 @@ class _ScanResultScreenState extends State<ScanResultScreen>
                       Expanded(
                         flex: 2,
                         child: GestureDetector(
-                          onTap: () => widget.navigate('assessment'),
+                          onTap: () => widget.navigate('dashboard'),
                           child: Container(
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             decoration: BoxDecoration(
@@ -863,14 +1154,14 @@ class _ScanResultScreenState extends State<ScanResultScreen>
                             child: const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text('Skrining Baru',
+                                Text('Kembali ke Beranda',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w700,
                                     fontSize: 13,
                                   )),
                                 SizedBox(width: 5),
-                                Icon(Icons.chevron_right_rounded, color: Colors.white, size: 15),
+                                Icon(Icons.home_rounded, color: Colors.white, size: 16),
                               ],
                             ),
                           ),
@@ -923,3 +1214,154 @@ class _ArcPainter extends CustomPainter {
   bool shouldRepaint(covariant _ArcPainter oldDelegate) =>
       oldDelegate.value != value || oldDelegate.color != color;
 }
+
+/// Tile keterangan satu jenis penyakit kulit pada panel edukasi di layar hasil.
+class _DiseaseInfoTile extends StatefulWidget {
+  final Color color;
+  final Color bgColor;
+  final IconData icon;
+  final String name;
+  final String badge;
+  final String description;
+  final String treatment;
+  final bool isLast;
+
+  const _DiseaseInfoTile({
+    required this.color,
+    required this.bgColor,
+    required this.icon,
+    required this.name,
+    required this.badge,
+    required this.description,
+    required this.treatment,
+    this.isLast = false,
+  });
+
+  @override
+  State<_DiseaseInfoTile> createState() => _DiseaseInfoTileState();
+}
+
+class _DiseaseInfoTileState extends State<_DiseaseInfoTile> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: Container(
+        padding: EdgeInsets.fromLTRB(
+            16, 12, 16, widget.isLast ? 14 : 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: widget.bgColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(widget.icon,
+                      color: widget.color, size: 15),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          color: Color(0xFF1F2937),
+                        ),
+                      ),
+                      Container(
+                        margin: const EdgeInsets.only(top: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: widget.bgColor,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          widget.badge,
+                          style: TextStyle(
+                            color: widget.color,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  _expanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  color: const Color(0xFF94A3B8),
+                  size: 20,
+                ),
+              ],
+            ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              child: _expanded
+                  ? Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.description,
+                            style: const TextStyle(
+                              color: Color(0xFF475569),
+                              fontSize: 11.5,
+                              height: 1.6,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: widget.bgColor,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.medical_services_outlined,
+                                    color: widget.color, size: 13),
+                                const SizedBox(width: 7),
+                                Expanded(
+                                  child: Text(
+                                    widget.treatment,
+                                    style: TextStyle(
+                                      color: widget.color,
+                                      fontSize: 11,
+                                      height: 1.55,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+

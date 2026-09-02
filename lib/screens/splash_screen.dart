@@ -1,7 +1,7 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/screening_provider.dart';
+import 'dart:async';
+import '../providers/auth_provider.dart';
 import '../models/screening_model.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
@@ -26,6 +26,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
   late Animation<Offset> _subtitleSlide;
   late Animation<double> _badgeFade;
   late Animation<double> _bottomFade;
+
+  bool _hasNavigated = false;
 
   @override
   void initState() {
@@ -68,9 +70,37 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     _fadeController.forward();
     _logoController.forward();
 
+    // After animation, check auth state and navigate accordingly
     Timer(const Duration(milliseconds: 3200), () {
-      if (mounted) widget.navigate('dashboard');
+      if (mounted && !_hasNavigated) {
+        _checkAuthAndNavigate();
+      }
     });
+  }
+
+  void _checkAuthAndNavigate() {
+    if (_hasNavigated) return;
+    final authState = ref.read(authStateProvider);
+    authState.when(
+      data: (user) {
+        _hasNavigated = true;
+        if (user != null) {
+          widget.navigate('dashboard');
+        } else {
+          widget.navigate('login');
+        }
+      },
+      loading: () {
+        // Wait a bit more and retry
+        Timer(const Duration(milliseconds: 500), () {
+          if (mounted) _checkAuthAndNavigate();
+        });
+      },
+      error: (_, __) {
+        _hasNavigated = true;
+        widget.navigate('login');
+      },
+    );
   }
 
   @override
@@ -99,6 +129,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         ),
         child: Stack(
           children: [
+            // Decorative background circles
             Positioned(
               top: -100,
               right: -80,
@@ -300,12 +331,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
               ),
             ),
             // Bottom elements
-            Positioned(
-              bottom: 90,
-              left: 0,
-              right: 0, 
-              child: FadeTransition(
-                opacity: _bottomFade,
+            FadeTransition(
+              opacity: _bottomFade,
+              child: Positioned(
+                bottom: 90,
+                left: 0,
+                right: 0,
                 child: Text(
                   'PKM-KC 2026 Innovation Project',
                   textAlign: TextAlign.center,
@@ -351,7 +382,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                 }),
               ),
             ),
-            // Skip button
+            // Tap to skip (Inject Dummy Data)
             Positioned(
               bottom: 28,
               left: 0,
@@ -359,24 +390,25 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
               child: GestureDetector(
                 onTap: () {
                   try {
+                    // Create dummy data using the valid constructor
                     final dummyHasil = ScreeningModel.demo(
-                      persentaseBcc: 84.5,
-                      status: 'Indikasi Terdeteksi',
-                      waktuScan: DateTime.now(),
+                      userId: 'demo_user',
+                      lesionLocation: 'Wajah (Hidung, Pipi, Dahi)',
+                      lesionNotes: 'Indikasi Terdeteksi via bypass',
+                      riskLevel: 'high',
                     );
 
-                    // 4. CARA TERBARU MEMPERBARUI DATA STATE MENGGUNAKAN RIVERPOD 👇
-                    ref.read(currentScreeningProvider.notifier).state = dummyHasil;
-
-                    print("⚡ Trigger data dummy terkirim menggunakan Riverpod!");
+                    // We can't set active screening directly because the user might not be logged in yet.
+                    // But we can just bypass to dashboard for demo purposes.
+                    print("⚡ Bypass splash screen to dashboard!");
+                    _hasNavigated = true;
+                    widget.navigate('dashboard');
                   } catch (e) {
-                    print("⚠️ Gagal memicu provider: $e");
+                    print("⚠️ Error: $e");
                   }
-
-                  widget.navigate('dashboard');
-                  },
+                },
                 child: Text(
-                  'Tap to continue',
+                  'Tap to continue (Demo Bypass)',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.45),

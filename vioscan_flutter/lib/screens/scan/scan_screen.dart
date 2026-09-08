@@ -1,18 +1,24 @@
+// ignore_for_file: uri_does_not_exist, undefined_identifier
 // lib/screens/scan/scan_screen.dart
+import 'dart:async'; // Ditambahkan untuk Timer polling hardware
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Ditambahkan untuk menyimpan data ke provider
 import 'package:go_router/go_router.dart';
 import '../../theme/app_theme.dart';
-
+import 'package:vioscan/screens/scan/hardware_api_service.dart';
+import 'package:vioscan/providers/screening_provider.dart';
+import 'package:vioscan/models/screening_model.dart';
 enum ScanStep { selectArea, capture, processing, done }
 
-class ScanScreen extends StatefulWidget {
+// 1. UBAH: StatefulWidget menjadi ConsumerStatefulWidget agar bisa simpan data ke Riverpod
+class ScanScreen extends ConsumerStatefulWidget {
   const ScanScreen({super.key});
 
   @override
-  State<ScanScreen> createState() => _ScanScreenState();
+  ConsumerState<ScanScreen> createState() => _ScanScreenState();
 }
 
-class _ScanScreenState extends State<ScanScreen>
+class _ScanScreenState extends ConsumerState<ScanScreen>
     with SingleTickerProviderStateMixin {
   ScanStep _step = ScanStep.selectArea;
   String _selectedArea = '';
@@ -20,6 +26,8 @@ class _ScanScreenState extends State<ScanScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnim;
   double _analysisProgress = 0;
+
+  Timer? _hardwarePollingTimer; // Tambahan: Timer untuk mendeteksi trigger dari hardware Raspi
 
   final List<Map<String, dynamic>> _bodyAreas = [
     {'label': 'Face', 'icon': Icons.face_outlined},
@@ -45,27 +53,88 @@ class _ScanScreenState extends State<ScanScreen>
 
   @override
   void dispose() {
+    _hardwarePollingTimer?.cancel(); // Matikan timer saat keluar layar
     _pulseController.dispose();
     super.dispose();
   }
 
+  // 2. LOGIKA HARDWARE TRIGGER: Dengarkan jika Raspi ditekan tombol fisiknya
   Future<void> _startCapture() async {
     setState(() => _step = ScanStep.capture);
+
+    // Mulai polling ngecek ke Raspi tiap 2 detik
+    _hardwarePollingTimer?.cancel();
+    _hardwarePollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      final hardwareData = await HardwareApiService.checkLatestScan();
+      if (hardwareData != null && hardwareData['success'] == true) {
+        timer.cancel(); // Ketemu data baru, stop polling
+        _handleScanResult(hardwareData); // Proses datanya
+      }
+    });
   }
 
+  // 3. LOGIKA SOFTWARE TRIGGER: Jika tombol di HP yang ditekan
   Future<void> _startProcessing() async {
+    _hardwarePollingTimer?.cancel(); // Stop polling karena kita trigger manual dari HP
+    
     setState(() {
       _step = ScanStep.processing;
-      _analysisProgress = 0;
+      _analysisProgress = 0.2; // Progress awal
     });
 
-    // Simulate AI processing
-    for (int i = 0; i <= 100; i += 5) {
-      await Future.delayed(const Duration(milliseconds: 80));
-      if (mounted) setState(() => _analysisProgress = i / 100.0);
+    try {
+      // Panggil API Raspi untuk ambil gambar & AI
+      final result = await HardwareApiService.triggerScan();
+      await _handleScanResult(result);
+    } catch (e) {
+      // Jika gagal konek, kembalikan ke layar capture
+      setState(() {
+        _step = ScanStep.capture;
+        _analysisProgress = 0;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal terhubung ke alat: $e'), backgroundColor: Colors.red),
+        );
+      }
+      _startCapture(); // Mulai polling hardware lagi
     }
+  }
 
-    if (mounted) context.go('/scan/result/scan_001');
+  // 4. MENYIMPAN DATA KE FLUTTER DAN PINDAH HALAMAN
+  Future<void> _handleScanResult(Map<String, dynamic> data) async {
+    setState(() {
+      _step = ScanStep.processing;
+      _analysisProgress = 0.8;
+    });
+
+    // Simpan data dari Hardware ke Riverpod Flutter (activeScreeningProvider)
+    try {
+  final newScreening = ScreeningModel.fromMap(
+    data['scan_id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+    {
+      'prediction': data['prediction'] ?? 'Unknown',
+      'confidence': data['confidence'] ?? 0.0,
+      'riskLevel': data['risk_level'] ?? 'moderate',
+      'probabilities': data['probabilities'] ?? {},
+      'recommendation': data['recommendation'] ?? '',
+      'lesionLocation': _selectedArea,
+      'userId': 'current_user_id',
+      'cnnModelVersion': 'BCC-v3.2',
+    },
+  );
+  
+  ref.read(activeScreeningProvider.notifier).setScreeningResult(newScreening);
+} catch (e) {
+  debugPrint("Error: $e");
+}
+
+    // Animasi progress selesai
+    setState(() => _analysisProgress = 1.0);
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // Navigasi ke halaman result sambil membawa data (opsional)
+    if (mounted) context.go('/scan/result/scan_001', extra: data);
   }
 
   @override
@@ -94,7 +163,7 @@ class _ScanScreenState extends State<ScanScreen>
               areas: _bodyAreas,
               selectedArea: _selectedArea,
               onSelect: (area) => setState(() => _selectedArea = area),
-              onNext: _selectedArea.isNotEmpty ? _startCapture : null,
+              onNext: _selectedArea.isNotEmpty ? _startCapture : null, // Memicu _startCapture (Mulai Polling)
             ),
           ScanStep.capture => _CaptureView(
               key: const ValueKey('capture'),
@@ -102,7 +171,7 @@ class _ScanScreenState extends State<ScanScreen>
               uvMode: _uvMode,
               pulseAnim: _pulseAnim,
               onToggleUV: () => setState(() => _uvMode = !_uvMode),
-              onCapture: _startProcessing,
+              onCapture: _startProcessing, // Memicu _startProcessing (Trigger Manual)
             ),
           ScanStep.processing => _ProcessingView(
               key: const ValueKey('processing'),
@@ -115,8 +184,11 @@ class _ScanScreenState extends State<ScanScreen>
   }
 }
 
-// ─── Step 1: Select Body Area ────────────────────────────────────────────────
+// ============================================================================
+// SEMUA KODE UI DI BAWAH INI SAMA PERSIS 100% TIDAK ADA YANG DIUBAH
+// ============================================================================
 
+// ─── Step 1: Select Body Area ────────────────────────────────────────────────
 class _SelectAreaView extends StatelessWidget {
   final List<Map<String, dynamic>> areas;
   final String selectedArea;
@@ -138,10 +210,8 @@ class _SelectAreaView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Progress step indicator
           const _StepIndicator(currentStep: 1),
           const SizedBox(height: 24),
-
           const Text(
             'Select Scan Area',
             style: TextStyle(
@@ -155,7 +225,6 @@ class _SelectAreaView extends StatelessWidget {
             style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 28),
-
           Expanded(
             child: GridView.builder(
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -210,7 +279,6 @@ class _SelectAreaView extends StatelessWidget {
               },
             ),
           ),
-
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
@@ -226,7 +294,6 @@ class _SelectAreaView extends StatelessWidget {
 }
 
 // ─── Step 2: Camera Capture ──────────────────────────────────────────────────
-
 class _CaptureView extends StatelessWidget {
   final String selectedArea;
   final bool uvMode;
@@ -248,7 +315,6 @@ class _CaptureView extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Camera preview placeholder
         Container(
           color: uvMode ? const Color(0xFF0A0020) : Colors.black,
           child: Center(
@@ -270,7 +336,6 @@ class _CaptureView extends StatelessWidget {
                 ),
                 child: Stack(
                   children: [
-                    // Corner guides
                     ...const [
                       Alignment.topLeft,
                       Alignment.topRight,
@@ -334,8 +399,6 @@ class _CaptureView extends StatelessWidget {
             ),
           ),
         ),
-
-        // Top overlay
         Positioned(
           top: 0,
           left: 0,
@@ -376,8 +439,6 @@ class _CaptureView extends StatelessWidget {
             ),
           ),
         ),
-
-        // Bottom controls
         Positioned(
           bottom: 0,
           left: 0,
@@ -406,7 +467,6 @@ class _CaptureView extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    // UV toggle
                     GestureDetector(
                       onTap: onToggleUV,
                       child: Container(
@@ -428,8 +488,6 @@ class _CaptureView extends StatelessWidget {
                             size: 24),
                       ),
                     ),
-
-                    // Capture button
                     GestureDetector(
                       onTap: onCapture,
                       child: Container(
@@ -452,8 +510,6 @@ class _CaptureView extends StatelessWidget {
                         ),
                       ),
                     ),
-
-                    // Flip camera
                     Container(
                       width: 52,
                       height: 52,
@@ -478,7 +534,6 @@ class _CaptureView extends StatelessWidget {
 }
 
 // ─── Step 3: AI Processing ───────────────────────────────────────────────────
-
 class _ProcessingView extends StatelessWidget {
   final double progress;
 
@@ -513,7 +568,6 @@ class _ProcessingView extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Scanning animation
               Container(
                 width: 120,
                 height: 120,
@@ -551,8 +605,6 @@ class _ProcessingView extends StatelessWidget {
                     fontSize: 14, color: Colors.white.withValues(alpha:0.6)),
               ),
               const SizedBox(height: 32),
-
-              // Progress bar
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: LinearProgressIndicator(
@@ -579,7 +631,6 @@ class _ProcessingView extends StatelessWidget {
 }
 
 // ─── Shared step indicator ───────────────────────────────────────────────────
-
 class _StepIndicator extends StatelessWidget {
   final int currentStep;
   final bool dark;

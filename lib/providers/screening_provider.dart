@@ -95,3 +95,7 @@ final activeScreeningProvider =
     StateNotifierProvider<ActiveScreeningNotifier, ScreeningModel?>((ref) {
   return ActiveScreeningNotifier();
 });
+
+/// Stores the captured image bytes from the hardware scan
+final scanImageBytesProvider = StateProvider<List<int>?>((ref) => null);
+

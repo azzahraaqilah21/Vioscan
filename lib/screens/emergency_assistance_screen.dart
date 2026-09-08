@@ -1,3 +1,5 @@
+// ignore_for_type: deprecated_member_use
+// ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import '../widgets/bottom_nav.dart';
 

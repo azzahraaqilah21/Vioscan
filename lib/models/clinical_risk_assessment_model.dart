@@ -1,6 +1,7 @@
 /// Stores answers from the 9-question Clinical Risk Assessment.
 /// These answers are metadata only — no risk score is computed here.
 /// They are combined with UV image analysis for AI prediction.
+import '../services/skin_risk_calculator.dart'; // Sesuaikan lokasi path relatif file SkinRiskCalculator kamu
 class ClinicalRiskAssessmentModel {
   final int age;
   final String gender; // 'male' | 'female' | 'other'
@@ -23,7 +24,32 @@ class ClinicalRiskAssessmentModel {
     required this.outdoorOccupation,
     this.immunosuppressiveCondition,
   });
+  List<String> toAnswersList() {
+    return [
+      // Q1: Tipe Kulit ('I-II' -> 'a', 'III-IV' -> 'b', 'V-VI' -> 'c')
+      skinType == 'I-II' ? 'a' : (skinType == 'III-IV' ? 'b' : 'c'),
 
+      // Q2: Sunburn ('never' -> 'a', '1-2' -> 'b', '3+' -> 'c')
+      historyOfSunburn == 'never' ? 'a' : (historyOfSunburn == '1-2' ? 'b' : 'c'),
+
+      // Q3: Riwayat Keluarga ('no' -> 'a', 'unsure' -> 'b', 'yes' -> 'c')
+      familyHistorySkinCancer == 'no' ? 'a' : (familyHistorySkinCancer == 'unsure' ? 'b' : 'c'),
+
+      // Q4: Paparan UV ('<1h' -> 'a', '1-3h' -> 'b', '>3h' -> 'c')
+      dailyUvExposure == '<1h' ? 'a' : (dailyUvExposure == '1-3h' ? 'b' : 'c'),
+
+      // Q5: Pekerjaan Luar Ruangan ('no' -> 'a', 'yes' -> 'c')
+      outdoorOccupation == 'no' ? 'a' : 'c',
+
+      // Q6: Riwayat Kanker Kulit ('no' -> 'a', 'yes' -> 'c')
+      previousSkinCancer == 'no' ? 'a' : 'c',
+    ];
+  }
+
+  /// Menghitung skor kuesioner (0 - 100) menggunakan SkinRiskCalculator.
+  double get score {
+    return SkinRiskCalculator.calculateQuestionnaireScore(toAnswersList());
+  }
   Map<String, dynamic> toMap() {
     return {
       'age': age,

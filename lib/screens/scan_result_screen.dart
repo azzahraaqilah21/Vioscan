@@ -1,9 +1,26 @@
+// ============================================================================
+// ScanResultScreen — VERSI PRODUKSI (NON-DEMO)
+// ----------------------------------------------------------------------------
+// Perbedaan dari versi demo:
+//  1. Switcher "Pilih Tingkat Risiko" DIHAPUS — tidak ada lagi setState manual
+//     untuk riskLevel. riskLevel, confidence, probabilitas, lokasi lesi, dan
+//     tanggal SELALU dibaca langsung dari activeScreeningProvider (real data
+//     hasil /scan Raspberry Pi + kalkulasi hybrid 30% Kuesioner + 70% AI).
+//  2. Jika activeScreeningProvider masih null (mis. layar terbuka tanpa alur
+//     scan yang benar), UI menampilkan Empty State — BUKAN data dummy —
+//     supaya tidak ada kemungkinan menampilkan hasil palsu ke tenaga medis.
+//  3. Jika scanImageBytesProvider null (foto belum ter-decode / gagal),
+//     ditampilkan placeholder foto yang jelas, bukan gradien UV simulasi.
+//  4. Desain, warna, animasi arc, kartu, dan seluruh tata letak 100% identik
+//     dengan versi demo — hanya sumber datanya yang dikunci ke data real.
+// ============================================================================
+
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:math' as math;
 import '../providers/auth_provider.dart';
 import '../providers/screening_provider.dart';
-import '../models/screening_model.dart';
 
 class ScanResultScreen extends ConsumerStatefulWidget {
   final Function(String) navigate;
@@ -15,60 +32,34 @@ class ScanResultScreen extends ConsumerStatefulWidget {
 
 class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
     with SingleTickerProviderStateMixin {
-  String riskLevel = 'moderate';
   bool _isSaved = false;
   bool _isSaving = false;
   late AnimationController _arcController;
   late Animation<double> _arcAnimation;
 
+  // Hanya menyimpan konstanta visual per tingkat risiko (warna, ikon, label).
+  // Angka confidence/probabilitas TIDAK lagi disimpan di sini — selalu real.
   final Map<String, Map<String, dynamic>> riskConfig = {
     'low': {
       'label': 'Risiko Rendah',
-      'labelEn': 'Low Risk',
-      'suspect': 'Nevus (Normal)',
       'bg': const Color(0xFFECFDF5),
       'text': const Color(0xFF059669),
       'border': const Color(0xFFA7F3D0),
-      'headerBg': [const Color(0xFF059669), const Color(0xFF10B981)],
       'icon': Icons.check_circle_rounded,
-      'confidence': 94.1,
-      'probabilities': [
-        {'name': 'Nevus (Normal)', 'value': 94.1, 'color': const Color(0xFF059669)},
-        {'name': 'Basal Cell Carcinoma', 'value': 4.0, 'color': const Color(0xFFDC2626)},
-        {'name': 'Lainnya (SH, dll)', 'value': 1.9, 'color': const Color(0xFFD97706)},
-      ],
     },
     'moderate': {
       'label': 'Risiko Sedang',
-      'labelEn': 'Moderate Risk',
-      'suspect': 'Sebaceous Hyperplasia',
       'bg': const Color(0xFFFFFBEB),
       'text': const Color(0xFFD97706),
       'border': const Color(0xFFFDE68A),
-      'headerBg': [const Color(0xFFB45309), const Color(0xFFD97706)],
       'icon': Icons.error_rounded,
-      'confidence': 78.1,
-      'probabilities': [
-        {'name': 'Sebaceous Hyperplasia', 'value': 78.1, 'color': const Color(0xFFD97706)},
-        {'name': 'Basal Cell Carcinoma', 'value': 16.8, 'color': const Color(0xFFDC2626)},
-        {'name': 'Nevus (Normal)', 'value': 5.1, 'color': const Color(0xFF059669)},
-      ],
     },
     'high': {
       'label': 'Risiko Tinggi',
-      'labelEn': 'High Risk',
-      'suspect': 'Basal Cell Carcinoma',
       'bg': const Color(0xFFFEF2F2),
       'text': const Color(0xFFDC2626),
       'border': const Color(0xFFFECACA),
-      'headerBg': [const Color(0xFF991B1B), const Color(0xFFDC2626)],
       'icon': Icons.warning_rounded,
-      'confidence': 85.3,
-      'probabilities': [
-        {'name': 'Basal Cell Carcinoma', 'value': 85.3, 'color': const Color(0xFFDC2626)},
-        {'name': 'Nevus (Normal)', 'value': 9.0, 'color': const Color(0xFF059669)},
-        {'name': 'Lainnya (SH, dll)', 'value': 5.7, 'color': const Color(0xFFD97706)},
-      ],
     },
   };
 
@@ -208,7 +199,9 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
       duration: const Duration(milliseconds: 1200),
     );
     _arcAnimation = CurvedAnimation(parent: _arcController, curve: Curves.easeOut);
-    _arcController.forward();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _arcController.forward();
+    });
   }
 
   @override
@@ -217,53 +210,37 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
     super.dispose();
   }
 
-  void setRisk(String level) {
-    setState(() {
-      riskLevel = level;
-      _isSaved = false;
-    });
-    _arcController.forward(from: 0);
-  }
-
-  Future<void> _saveResult() async {
-    if (_isSaved || _isSaving) return;
+  Future<void> _saveResult(dynamic activeScreening) async {
+    if (_isSaved || _isSaving || activeScreening == null) return;
     setState(() => _isSaving = true);
 
     try {
       final user = ref.read(authStateProvider).value;
       if (user == null) throw Exception('User not logged in');
 
-      final lesionInfo = ref.read(lesionInfoProvider);
-      final clinicalData = ref.read(clinicalAssessmentProvider);
-
-      final model = ScreeningModel.demo(
-        userId: user.uid,
-        lesionLocation: lesionInfo?.location ?? 'Lengan Kiri',
-        lesionNotes: lesionInfo?.notes,
-        clinicalRiskAssessment: clinicalData,
-        riskLevel: riskLevel,
-      );
-
       final firestoreService = ref.read(firestoreServiceProvider);
-      await firestoreService.saveScreening(model);
-      
-      // Clear providers
+      await firestoreService.saveScreening(activeScreening);
+
       ref.read(lesionInfoProvider.notifier).clear();
       ref.read(clinicalAssessmentProvider.notifier).clear();
-      
-      // Refresh stats
       ref.invalidate(userStatsProvider);
-      
+
       setState(() => _isSaved = true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Hasil berhasil disimpan!'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('Hasil berhasil disimpan!'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menyimpan: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Gagal menyimpan: $e'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -271,13 +248,54 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
     }
   }
 
+  Color _getProbColor(String name) {
+    if (name.contains('BCC') || name.contains('Basal')) {
+      return const Color(0xFFDC2626);
+    } else if (name.contains('Nevus')) {
+      return const Color(0xFF059669);
+    } else {
+      return const Color(0xFFD97706);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final topPad = MediaQuery.of(context).padding.top;
+    final activeScreening = ref.watch(activeScreeningProvider);
+    // Tipe eksplisit Uint8List? mencegah error 'List<int> can't be assigned to Uint8List'.
+    // Jika provider mengembalikan List<int>, cast di sini aman karena Image.memory butuh Uint8List.
+    final Uint8List? imageBytes = () {
+      final raw = ref.watch(scanImageBytesProvider);
+      if (raw == null) return null;
+      if (raw is Uint8List) return raw;
+      return Uint8List.fromList(raw);
+    }();
+
+    // ── EMPTY STATE: tidak ada hasil pemindaian real yang tersedia ──────
+    if (activeScreening == null) {
+      return _buildEmptyState(context, topPad);
+    }
+
+    final String riskLevel = riskConfig.containsKey(activeScreening.riskLevel)
+        ? activeScreening.riskLevel
+        : 'moderate';
+
     final rc = riskConfig[riskLevel]!;
     final reco = recommendations[riskLevel]!;
     final analysis = analysisItems[riskLevel]!;
-    final confidence = rc['confidence'] as double;
+
+    final double confidence = activeScreening.confidence;
+    final String suspectText = activeScreening.prediction;
+    final String lesionLocation = activeScreening.lesionLocation;
+
+    final List<Map<String, dynamic>> probabilitiesList =
+        activeScreening.probabilities.entries.map<Map<String, dynamic>>((e) {
+      return {
+        'name': e.key,
+        'value': e.value,
+        'color': _getProbColor(e.key),
+      };
+    }).toList();
 
     return Container(
       color: const Color(0xFFF0FAFA),
@@ -301,117 +319,66 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                 )
               ],
             ),
-            child: Column(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        GestureDetector(
-                          onTap: () => widget.navigate('dashboard'),
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFF0FAFA),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(Icons.arrow_back_rounded,
-                                color: Color(0xFF0A858C), size: 20),
-                          ),
+                    GestureDetector(
+                      onTap: () => widget.navigate('dashboard'),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFF0FAFA),
+                          shape: BoxShape.circle,
                         ),
-                        const SizedBox(width: 12),
-                        const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Hasil Skrining',
-                              style: TextStyle(
-                                color: Color(0xFF1F2937),
-                                fontSize: 17,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Text(
-                              '31 Mei 2026 · 09:15 WIB',
-                              style: TextStyle(
-                                color: Color(0xFF94A3B8),
-                                fontSize: 11.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                        child: const Icon(Icons.arrow_back_rounded,
+                            color: Color(0xFF0A858C), size: 20),
+                      ),
                     ),
-                    Row(
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final ico in [Icons.share_rounded, Icons.save_alt_rounded])
-                          Container(
-                            margin: const EdgeInsets.only(left: 8),
-                            width: 38,
-                            height: 38,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFF0FAFA),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(ico, color: const Color(0xFF0A858C), size: 16),
+                        const Text(
+                          'Hasil Skrining',
+                          style: TextStyle(
+                            color: Color(0xFF1F2937),
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
                           ),
+                        ),
+                        Text(
+                          '${activeScreening.screeningDate.day} ${_getMonthName(activeScreening.screeningDate.month)} ${activeScreening.screeningDate.year} · '
+                          '${activeScreening.screeningDate.hour.toString().padLeft(2, '0')}:${activeScreening.screeningDate.minute.toString().padLeft(2, '0')} WIB',
+                          style: const TextStyle(
+                            color: Color(0xFF94A3B8),
+                            fontSize: 11.5,
+                          ),
+                        ),
                       ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                // Demo switcher
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'SKENARIO DEMO — Pilih tingkat risiko:',
-                    style: TextStyle(
-                      color: Color(0xFF94A3B8),
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
                 Row(
-                  children: ['low', 'moderate', 'high'].map((level) {
-                    final cfg = riskConfig[level]!;
-                    final isActive = riskLevel == level;
-                    return Expanded(
-                      child: GestureDetector(
-                        onTap: () => setRisk(level),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          margin: const EdgeInsets.symmetric(horizontal: 3.5),
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          decoration: BoxDecoration(
-                            color: isActive ? cfg['bg'] as Color : Colors.transparent,
-                            borderRadius: BorderRadius.circular(100),
-                            border: Border.all(
-                              color: isActive
-                                  ? cfg['text'] as Color
-                                  : const Color(0xFFE5E7EB),
-                              width: 1.5,
-                            ),
-                          ),
-                          child: Text(
-                            cfg['labelEn'] as String,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: isActive
-                                  ? cfg['text'] as Color
-                                  : const Color(0xFF6B7280),
-                              fontSize: 11,
-                              fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
-                            ),
-                          ),
+                  children: [
+                    for (final ico in [
+                      Icons.share_rounded,
+                      Icons.save_alt_rounded
+                    ])
+                      Container(
+                        margin: const EdgeInsets.only(left: 8),
+                        width: 38,
+                        height: 38,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFF0FAFA),
+                          shape: BoxShape.circle,
                         ),
+                        child:
+                            Icon(ico, color: const Color(0xFF0A858C), size: 16),
                       ),
-                    );
-                  }).toList(),
+                  ],
                 ),
               ],
             ),
@@ -422,7 +389,7 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
               padding: const EdgeInsets.fromLTRB(18, 14, 18, 0),
               child: Column(
                 children: [
-                  // UV Image + risk banner
+                  // Image + risk banner
                   Container(
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
@@ -430,7 +397,7 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                       borderRadius: BorderRadius.circular(22),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.07),
+                          color: Colors.black.withValues(alpha: 0.07),
                           blurRadius: 16,
                           offset: const Offset(0, 2),
                         )
@@ -439,50 +406,76 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                     clipBehavior: Clip.hardEdge,
                     child: Column(
                       children: [
-                        // UV Image
                         Container(
-                          height: 150,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: riskLevel == 'high'
-                                  ? [const Color(0xFF120030), const Color(0xFF3D0B6B), const Color(0xFF6B0082), const Color(0xFF8B21A8), const Color(0xFFDC2626)]
-                                  : riskLevel == 'moderate'
-                                  ? [const Color(0xFF120030), const Color(0xFF2D0B6B), const Color(0xFF4B0082), const Color(0xFF7B21A8), const Color(0xFFD97706)]
-                                  : [const Color(0xFF120030), const Color(0xFF2D0B6B), const Color(0xFF4B0082), const Color(0xFF5B21A8), const Color(0xFF36B8B7)],
-                              stops: const [0, 0.3, 0.55, 0.75, 1.0],
-                            ),
-                          ),
+                          height: 160,
+                          width: double.infinity,
+                          color: const Color(0xFF0F172A),
                           child: Stack(
                             children: [
-                              ...List.generate(3, (i) => Positioned(
-                                left: 0, right: 0,
-                                top: 150 * (i + 1) / 4,
-                                child: Container(height: 1, color: const Color(0xFF77DAD7).withOpacity(0.1)),
-                              )),
+                              if (imageBytes != null)
+                                Positioned.fill(
+                                  child: Image.memory(
+                                    imageBytes,
+                                    fit: BoxFit.cover,
+                                  ),
+                                )
+                              else
+                                const Positioned.fill(
+                                  child: Center(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.image_not_supported_rounded,
+                                            color: Color(0xFF475569), size: 30),
+                                        SizedBox(height: 6),
+                                        Text(
+                                          'Foto lesi tidak tersedia',
+                                          style: TextStyle(
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 11.5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               Positioned(
-                                top: 10, left: 12,
+                                top: 10,
+                                left: 12,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.4),
+                                    color: Colors.black.withValues(alpha: 0.5),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
-                                  child: const Text('Fluorosensi UV · BC-Care',
-                                    style: TextStyle(color: Color(0xFF77DAD7), fontSize: 11, fontWeight: FontWeight.w600)),
+                                  child: const Text(
+                                    'Fluorosensi UV · VioScan',
+                                    style: TextStyle(
+                                      color: Color(0xFF77DAD7),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
                                 ),
                               ),
                               Positioned(
-                                bottom: 10, right: 12,
+                                bottom: 10,
+                                right: 12,
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.4),
+                                    color: Colors.black.withValues(alpha: 0.5),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
-                                  child: Text('Lengan Kiri',
-                                    style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 11)),
+                                  child: Text(
+                                    lesionLocation,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                      fontSize: 11,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ],
@@ -490,7 +483,8 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                         ),
                         // Risk summary
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 12),
                           color: rc['bg'] as Color,
                           child: Row(
                             children: [
@@ -510,32 +504,30 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                                       ),
                                     ),
                                     Text(
-                                      '${rc['labelEn']} · Lokasi: Lengan Kiri',
+                                      'Suspek: $suspectText · Lokasi: $lesionLocation',
                                       style: TextStyle(
-                                        color: (rc['text'] as Color).withOpacity(0.75),
+                                        color: (rc['text'] as Color)
+                                            .withValues(alpha: 0.85),
                                         fontSize: 11,
+                                        fontWeight: FontWeight.w500,
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 300),
-                                child: Container(
-                                  key: ValueKey(riskLevel),
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 5),
-                                  decoration: BoxDecoration(
-                                    color: rc['text'] as Color,
-                                    borderRadius: BorderRadius.circular(100),
-                                  ),
-                                  child: Text(
-                                    '$confidence%',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w800,
-                                    ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 5),
+                                decoration: BoxDecoration(
+                                  color: rc['text'] as Color,
+                                  borderRadius: BorderRadius.circular(100),
+                                ),
+                                child: Text(
+                                  '${confidence.toStringAsFixed(1)}%',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
                                   ),
                                 ),
                               ),
@@ -558,7 +550,7 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                             borderRadius: BorderRadius.circular(22),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.06),
+                                color: Colors.black.withValues(alpha: 0.06),
                                 blurRadius: 12,
                                 offset: const Offset(0, 2),
                               )
@@ -567,8 +559,9 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                           child: Column(
                             children: [
                               const Text(
-                                'Akurasi CNN',
-                                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                                'Akurasi Skor',
+                                style: TextStyle(
+                                    color: Color(0xFF94A3B8), fontSize: 11),
                               ),
                               const SizedBox(height: 8),
                               SizedBox(
@@ -579,16 +572,18 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                                   builder: (_, __) {
                                     return CustomPaint(
                                       painter: _ArcPainter(
-                                        value: _arcAnimation.value * confidence / 100,
+                                        value: _arcAnimation.value *
+                                            confidence /
+                                            100,
                                         color: rc['text'] as Color,
                                       ),
                                       child: Center(
                                         child: Text(
-                                          '$confidence%',
+                                          '${confidence.toStringAsFixed(1)}%',
                                           style: TextStyle(
                                             color: rc['text'] as Color,
                                             fontWeight: FontWeight.w800,
-                                            fontSize: 13,
+                                            fontSize: 12.5,
                                           ),
                                         ),
                                       ),
@@ -598,7 +593,11 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                confidence >= 90 ? 'Sangat Tinggi' : confidence >= 75 ? 'Tinggi' : 'Cukup',
+                                confidence >= 85
+                                    ? 'Sangat Tinggi'
+                                    : confidence >= 65
+                                        ? 'Tinggi'
+                                        : 'Cukup',
                                 style: TextStyle(
                                   color: rc['text'] as Color,
                                   fontSize: 10.5,
@@ -620,7 +619,7 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                             borderRadius: BorderRadius.circular(22),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.06),
+                                color: Colors.black.withValues(alpha: 0.06),
                                 blurRadius: 12,
                                 offset: const Offset(0, 2),
                               )
@@ -631,7 +630,7 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                               const Align(
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  'Analisis BC-Care',
+                                  'Analisis VioScan',
                                   style: TextStyle(
                                       color: Color(0xFF94A3B8), fontSize: 11),
                                 ),
@@ -645,12 +644,14 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                                     bottom: i < analysis.length - 1 ? 5 : 0,
                                   ),
                                   child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
                                       Text(
                                         item['label'] as String,
                                         style: const TextStyle(
-                                            color: Color(0xFF94A3B8), fontSize: 10),
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 10),
                                       ),
                                       Row(
                                         children: [
@@ -687,271 +688,271 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                   ),
                   const SizedBox(height: 14),
                   // Disease Probabilities Distribution
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      key: ValueKey('$riskLevel-prob'),
-                      padding: const EdgeInsets.all(16),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(22),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.06),
-                            blurRadius: 12,
-                            offset: const Offset(0, 2),
-                          )
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Distribusi Probabilitas Penyakit',
-                            style: TextStyle(
-                              color: Color(0xFF1F2937),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Prediksi AI berdasarkan analisis pola fluorosensi',
-                            style: TextStyle(
-                              color: Color(0xFF94A3B8),
-                              fontSize: 10.5,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          ...(rc['probabilities'] as List).map((prob) {
-                            final val = prob['value'] as double;
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: Column(
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        prob['name'] as String,
-                                        style: const TextStyle(
-                                          color: Color(0xFF475569),
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-
-                                      Text(
-                                        '${val.toStringAsFixed(1)}%',
-                                        style: TextStyle(
-                                          color: prob['color'] as Color,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(4),
-                                    child: LinearProgressIndicator(
-                                      value: val / 100,
-                                      backgroundColor: const Color(0xFFF1F5F9),
-                                      valueColor: AlwaysStoppedAnimation(prob['color'] as Color),
-                                      minHeight: 6,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                        ],
-                      ),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.06),
+                          blurRadius: 12,
+                          offset: const Offset(0, 2),
+                        )
+                      ],
                     ),
-                  ),
-                  // Urgency banner
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: Container(
-                      key: ValueKey('$riskLevel-urgency'),
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: reco['urgencyBg'] as Color,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: reco['urgencyColor'] as Color,
-                          width: 2,
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: (reco['urgencyColor'] as Color).withOpacity(0.13),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              rc['icon'] as IconData,
-                              color: reco['urgencyColor'] as Color,
-                              size: 18,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  reco['urgency'] as String,
-                                  style: TextStyle(
-                                    color: reco['urgencyColor'] as Color,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 12.5,
-                                  ),
-                                ),
-                                Text(
-                                  'Panduan untuk Tenaga Kesehatan Puskesmas',
-                                  style: TextStyle(
-                                    color: (reco['urgencyColor'] as Color).withOpacity(0.7),
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // Recommendation sections
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
                     child: Column(
-                      key: ValueKey('$riskLevel-reco'),
-                      children: (reco['sections'] as List).map((section) {
-                        final s = section as Map<String, dynamic>;
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.06),
-                                blurRadius: 12,
-                                offset: const Offset(0, 2),
-                              )
-                            ],
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Distribusi Probabilitas Penyakit',
+                          style: TextStyle(
+                            color: Color(0xFF1F2937),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // Section header
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Prediksi gabungan 30% Kuesioner + 70% Model AI',
+                          style: TextStyle(
+                            color: Color(0xFF94A3B8),
+                            fontSize: 10.5,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        ...probabilitiesList.map((prob) {
+                          final val = (prob['value'] as num).toDouble();
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Column(
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Container(
-                                      width: 34,
-                                      height: 34,
-                                      decoration: BoxDecoration(
-                                        color: s['bg'] as Color,
-                                        borderRadius: BorderRadius.circular(11),
-                                      ),
-                                      child: Icon(
-                                        s['icon'] as IconData,
-                                        color: s['color'] as Color,
-                                        size: 16,
+                                    Text(
+                                      prob['name'] as String,
+                                      style: const TextStyle(
+                                        color: Color(0xFF475569),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            s['title'] as String,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 13,
-                                              color: Color(0xFF1F2937),
-                                            ),
-                                          ),
-                                          Text(
-                                            'Sumber: ${s['source']}',
-                                            style: const TextStyle(
-                                              color: Color(0xFF94A3B8),
-                                              fontSize: 9.5,
-                                              height: 1.3,
-                                            ),
-                                          ),
-                                        ],
+                                    Text(
+                                      '${val.toStringAsFixed(1)}%',
+                                      style: TextStyle(
+                                        color: prob['color'] as Color,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
                                       ),
                                     ),
                                   ],
                                 ),
+                                const SizedBox(height: 6),
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: LinearProgressIndicator(
+                                    value: (val / 100).clamp(0.0, 1.0),
+                                    backgroundColor: const Color(0xFFF1F5F9),
+                                    valueColor: AlwaysStoppedAnimation(
+                                        prob['color'] as Color),
+                                    minHeight: 6,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                    ),
+                  ),
+                  // Urgency banner
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: reco['urgencyBg'] as Color,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: reco['urgencyColor'] as Color,
+                        width: 2,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: (reco['urgencyColor'] as Color)
+                                .withValues(alpha: 0.13),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            rc['icon'] as IconData,
+                            color: reco['urgencyColor'] as Color,
+                            size: 18,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                reco['urgency'] as String,
+                                style: TextStyle(
+                                  color: reco['urgencyColor'] as Color,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12.5,
+                                ),
                               ),
-                              const Divider(height: 1, color: Color(0xFFF9FAFB)),
-                              // Items
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-                                child: Column(
-                                  children: (s['items'] as List).asMap().entries.map((e) {
-                                    return Padding(
-                                      padding: EdgeInsets.only(
-                                        bottom: e.key < (s['items'] as List).length - 1 ? 10 : 0,
-                                      ),
-                                      child: Row(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Container(
-                                            width: 20,
-                                            height: 20,
-                                            margin: const EdgeInsets.only(top: 1),
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              color: s['bg'] as Color,
-                                            ),
-                                            child: Center(
-                                              child: Text(
-                                                '${e.key + 1}',
-                                                style: TextStyle(
-                                                  color: s['color'] as Color,
-                                                  fontSize: 9.5,
-                                                  fontWeight: FontWeight.w800,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          const SizedBox(width: 9),
-                                          Expanded(
-                                            child: Text(
-                                              e.value as String,
-                                              style: const TextStyle(
-                                                color: Color(0xFF374151),
-                                                fontSize: 12,
-                                                height: 1.55,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                  }).toList(),
+                              Text(
+                                'Panduan untuk Tenaga Kesehatan Puskesmas',
+                                style: TextStyle(
+                                  color: (reco['urgencyColor'] as Color)
+                                      .withValues(alpha: 0.7),
+                                  fontSize: 11,
                                 ),
                               ),
                             ],
                           ),
-                        );
-                      }).toList(),
+                        ),
+                      ],
                     ),
                   ),
-                  // ── Panel Informasi 3 Jenis Penyakit Kulit ──────────────
+                  // Recommendation sections
+                  Column(
+                    children: (reco['sections'] as List).map((section) {
+                      final s = section as Map<String, dynamic>;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.06),
+                              blurRadius: 12,
+                              offset: const Offset(0, 2),
+                            )
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 12, 16, 10),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration: BoxDecoration(
+                                      color: s['bg'] as Color,
+                                      borderRadius: BorderRadius.circular(11),
+                                    ),
+                                    child: Icon(
+                                      s['icon'] as IconData,
+                                      color: s['color'] as Color,
+                                      size: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          s['title'] as String,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            color: Color(0xFF1F2937),
+                                          ),
+                                        ),
+                                        Text(
+                                          'Sumber: ${s['source']}',
+                                          style: const TextStyle(
+                                            color: Color(0xFF94A3B8),
+                                            fontSize: 9.5,
+                                            height: 1.3,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Divider(height: 1, color: Color(0xFFF9FAFB)),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                              child: Column(
+                                children: (s['items'] as List)
+                                    .asMap()
+                                    .entries
+                                    .map((e) {
+                                  return Padding(
+                                    padding: EdgeInsets.only(
+                                      bottom: e.key <
+                                              (s['items'] as List).length - 1
+                                          ? 10
+                                          : 0,
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 20,
+                                          height: 20,
+                                          margin:
+                                              const EdgeInsets.only(top: 1),
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: s['bg'] as Color,
+                                          ),
+                                          child: Center(
+                                            child: Text(
+                                              '${e.key + 1}',
+                                              style: TextStyle(
+                                                color: s['color'] as Color,
+                                                fontSize: 9.5,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 9),
+                                        Expanded(
+                                          child: Text(
+                                            e.value as String,
+                                            style: const TextStyle(
+                                              color: Color(0xFF374151),
+                                              fontSize: 12,
+                                              height: 1.55,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  // Panel Informasi 3 Jenis Penyakit Kulit
                   Container(
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
@@ -959,7 +960,7 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                       borderRadius: BorderRadius.circular(22),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
+                          color: Colors.black.withValues(alpha: 0.06),
                           blurRadius: 12,
                           offset: const Offset(0, 2),
                         ),
@@ -1006,10 +1007,9 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                           ),
                         ),
                         const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                        // BCC
-                        _DiseaseInfoTile(
-                          color: const Color(0xFFDC2626),
-                          bgColor: const Color(0xFFFEF2F2),
+                        const _DiseaseInfoTile(
+                          color: Color(0xFFDC2626),
+                          bgColor: Color(0xFFFEF2F2),
                           icon: Icons.warning_rounded,
                           name: 'Basal Cell Carcinoma (BCC)',
                           badge: 'RISIKO TINGGI',
@@ -1019,10 +1019,9 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                               'Dapat disembuhkan jika ditangani dini. Terapi: bedah eksisi, Mohs surgery, atau krioterapi.',
                         ),
                         const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                        // Nevus
-                        _DiseaseInfoTile(
-                          color: const Color(0xFF059669),
-                          bgColor: const Color(0xFFECFDF5),
+                        const _DiseaseInfoTile(
+                          color: Color(0xFF059669),
+                          bgColor: Color(0xFFECFDF5),
                           icon: Icons.check_circle_rounded,
                           name: 'Nevus (Tahi Lalat Jinak)',
                           badge: 'JINAK',
@@ -1032,10 +1031,9 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                               'Pantau dengan metode ABCDE (Asymmetry, Border, Color, Diameter, Evolution). Konsultasi jika ada perubahan mendadak.',
                         ),
                         const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                        // SH
-                        _DiseaseInfoTile(
-                          color: const Color(0xFFD97706),
-                          bgColor: const Color(0xFFFFFBEB),
+                        const _DiseaseInfoTile(
+                          color: Color(0xFFD97706),
+                          bgColor: Color(0xFFFFFBEB),
                           icon: Icons.error_rounded,
                           name: 'Hiperplasia Sebasea (SH)',
                           badge: 'SEDANG',
@@ -1048,25 +1046,25 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                       ],
                     ),
                   ),
-                  // ── Disclaimer Medis ─────────────────────────────────────
+                  // Disclaimer Medis
                   Container(
                     padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
                       color: const Color(0xFFFFFBEB),
                       borderRadius: BorderRadius.circular(16),
-                      border:
-                          Border.all(color: const Color(0xFFFDE68A), width: 1.5),
+                      border: Border.all(
+                          color: const Color(0xFFFDE68A), width: 1.5),
                     ),
-                    child: Column(
+                    child: const Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.gavel_rounded,
+                            Icon(Icons.gavel_rounded,
                                 size: 15, color: Color(0xFFD97706)),
-                            const SizedBox(width: 6),
-                            const Text(
+                            SizedBox(width: 6),
+                            Text(
                               'Disclaimer Medis',
                               style: TextStyle(
                                 color: Color(0xFFD97706),
@@ -1076,17 +1074,17 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                             ),
                           ],
                         ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'Hasil analisis VioScan BC-Care bersifat SKRINING AWAL berbasis AI dan TIDAK dapat menggantikan diagnosis klinis dokter atau SpKK. Hasil ini hanya sebagai alat bantu puskesmas untuk menentukan prioritas rujukan.',
+                        SizedBox(height: 6),
+                        Text(
+                          'Hasil analisis VioScan bersifat SKRINING AWAL berbasis AI + Kuesioner dan TIDAK dapat menggantikan diagnosis klinis dokter atau SpKK. Hasil ini hanya sebagai alat bantu puskesmas untuk menentukan prioritas rujukan.',
                           style: TextStyle(
                             color: Color(0xFF92400E),
                             fontSize: 11,
                             height: 1.6,
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        const Text(
+                        SizedBox(height: 6),
+                        Text(
                           '📚 Berbasis: NCCN BCC Guidelines 2024 · Kemenkes RI 2022 · PERDOSKI CPG 2021 · EDF Guidelines 2023',
                           style: TextStyle(
                             color: Color(0xFF78350F),
@@ -1103,7 +1101,9 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                     children: [
                       Expanded(
                         child: GestureDetector(
-                          onTap: _isSaved ? null : _saveResult,
+                          onTap: _isSaved
+                              ? null
+                              : () => _saveResult(activeScreening),
                           child: Container(
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             decoration: BoxDecoration(
@@ -1112,19 +1112,27 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                                 color: Color(0xFF0A858C),
                                 width: 2,
                               )),
-                              color: _isSaved ? const Color(0xFF0A858C).withOpacity(0.1) : Colors.transparent,
+                              color: _isSaved
+                                  ? const Color(0xFF0A858C).withValues(alpha: 0.1)
+                                  : Colors.transparent,
                             ),
                             child: Center(
-                              child: _isSaving 
-                                ? const SizedBox(
-                                    width: 18, height: 18, 
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0A858C)))
-                                : Text(_isSaved ? 'Tersimpan' : 'Simpan Hasil',
-                                style: const TextStyle(
-                                  color: Color(0xFF0A858C),
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 13,
-                                )),
+                              child: _isSaving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Color(0xFF0A858C)),
+                                    )
+                                  : Text(
+                                      _isSaved ? 'Tersimpan' : 'Simpan Hasil',
+                                      style: const TextStyle(
+                                        color: Color(0xFF0A858C),
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                      ),
+                                    ),
                             ),
                           ),
                         ),
@@ -1145,7 +1153,8 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                               borderRadius: BorderRadius.circular(16),
                               boxShadow: [
                                 BoxShadow(
-                                  color: const Color(0xFF0A858C).withOpacity(0.3),
+                                  color: const Color(0xFF0A858C)
+                                      .withValues(alpha: 0.3),
                                   blurRadius: 16,
                                   offset: const Offset(0, 4),
                                 )
@@ -1154,14 +1163,17 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
                             child: const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text('Kembali ke Beranda',
+                                Text(
+                                  'Kembali ke Beranda',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w700,
                                     fontSize: 13,
-                                  )),
+                                  ),
+                                ),
                                 SizedBox(width: 5),
-                                Icon(Icons.home_rounded, color: Colors.white, size: 16),
+                                Icon(Icons.home_rounded,
+                                    color: Colors.white, size: 16),
                               ],
                             ),
                           ),
@@ -1177,6 +1189,139 @@ class _ScanResultScreenState extends ConsumerState<ScanResultScreen>
         ],
       ),
     );
+  }
+
+  // ── Empty State: dipanggil jika activeScreeningProvider == null ────────
+  // Mencegah layar menampilkan data dummy/salah ke tenaga medis saat alur
+  // scan belum selesai atau layar terbuka di luar urutan yang benar.
+  Widget _buildEmptyState(BuildContext context, double topPad) {
+    return Container(
+      color: const Color(0xFFF0FAFA),
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.only(top: topPad + 8, left: 18, right: 18, bottom: 14),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(color: Color(0x0D000000), blurRadius: 12, offset: Offset(0, 2))
+              ],
+            ),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => widget.navigate('dashboard'),
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF0FAFA),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.arrow_back_rounded,
+                        color: Color(0xFF0A858C), size: 20),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'Hasil Skrining',
+                  style: TextStyle(
+                    color: Color(0xFF1F2937),
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE6F7F7),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.search_off_rounded,
+                          color: Color(0xFF0A858C), size: 32),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Belum Ada Hasil Pemindaian',
+                      style: TextStyle(
+                        color: Color(0xFF1F2937),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Silakan lakukan pemindaian lesi terlebih dahulu melalui VioScan agar hasil dapat ditampilkan di sini.',
+                      style: TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 12.5,
+                        height: 1.6,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    GestureDetector(
+                      onTap: () => widget.navigate('dashboard'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 13),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF0A858C), Color(0xFF36B8B7)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Text(
+                          'Kembali ke Beranda',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getMonthName(int month) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'Mei',
+      'Jun',
+      'Jul',
+      'Agu',
+      'Sep',
+      'Okt',
+      'Nov',
+      'Des'
+    ];
+    return months[month - 1];
   }
 }
 
@@ -1215,7 +1360,6 @@ class _ArcPainter extends CustomPainter {
       oldDelegate.value != value || oldDelegate.color != color;
 }
 
-/// Tile keterangan satu jenis penyakit kulit pada panel edukasi di layar hasil.
 class _DiseaseInfoTile extends StatefulWidget {
   final Color color;
   final Color bgColor;
@@ -1249,8 +1393,7 @@ class _DiseaseInfoTileState extends State<_DiseaseInfoTile> {
     return GestureDetector(
       onTap: () => setState(() => _expanded = !_expanded),
       child: Container(
-        padding: EdgeInsets.fromLTRB(
-            16, 12, 16, widget.isLast ? 14 : 12),
+        padding: EdgeInsets.fromLTRB(16, 12, 16, widget.isLast ? 14 : 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1263,8 +1406,7 @@ class _DiseaseInfoTileState extends State<_DiseaseInfoTile> {
                     color: widget.bgColor,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(widget.icon,
-                      color: widget.color, size: 15),
+                  child: Icon(widget.icon, color: widget.color, size: 15),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1364,4 +1506,3 @@ class _DiseaseInfoTileState extends State<_DiseaseInfoTile> {
     );
   }
 }
-

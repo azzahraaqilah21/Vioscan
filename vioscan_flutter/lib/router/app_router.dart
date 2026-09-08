@@ -11,6 +11,10 @@ import '../screens/history/history_screen.dart';
 import '../screens/education/education_screen.dart';
 import '../screens/main_shell.dart';
 
+// Tambahkan import ini jika RegisterScreen dan ProfileScreen ada di file terpisah
+import '../screens/auth/register_screen.dart'; 
+import '../screens/profile/profile_screen.dart'; 
+
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/splash',
@@ -44,9 +48,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             builder: (_, __) => const ScanScreen(),
             routes: [
               GoRoute(
-                path: 'result/:scanId',
-                builder: (_, state) => ScanResultScreen(
-                  scanId: state.pathParameters['scanId']!,
+                // Path tetap bisa pakai :scanId jika dibutuhkan untuk deep-link
+                path: 'result/:scanId', 
+                builder: (context, state) => ScanResultScreen(
+                  // Mengganti scanId menjadi fungsi callback navigate
+                  navigate: (routeName) {
+                    if (routeName == 'dashboard' || routeName == 'home') {
+                      context.go('/home'); // Mengarahkan kembali ke beranda
+                    }
+                  },
                 ),
               ),
             ],

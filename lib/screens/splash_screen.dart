@@ -1,8 +1,9 @@
+// ignore_for_type: deprecated_member_use
+// ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
 import '../providers/auth_provider.dart';
-import '../models/screening_model.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
   final Function(String) navigate;
@@ -91,7 +92,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         }
       },
       loading: () {
-        // Wait a bit more and retry
         Timer(const Duration(milliseconds: 500), () {
           if (mounted) _checkAuthAndNavigate();
         });
@@ -178,7 +178,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        // Pulsing rings
                         ...List.generate(3, (i) {
                           return AnimatedBuilder(
                             animation: _pulseController,
@@ -211,7 +210,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                             },
                           );
                         }),
-                        // Logo circle
                         Container(
                           width: 90,
                           height: 90,
@@ -281,7 +279,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                     ),
                   ),
                   const SizedBox(height: 20),
-                  // FLARE-AI badge
+                  // FLARE-AI / Powered by VioTech AI badge
                   FadeTransition(
                     opacity: _badgeFade,
                     child: Container(
@@ -316,7 +314,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                           ),
                           const SizedBox(width: 8),
                           const Text(
-                            'Powered by FLARE-AI',
+                            'Powered by VioTech AI',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 12.5,
@@ -327,28 +325,25 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12), 
+                  // PKM-KC 2026 Innovation Project (Dipindah ke sini agar tepat di bawah badge)
+                  FadeTransition(
+                    opacity: _bottomFade,
+                    child: Text(
+                      'PKM-KC 2026 Innovation Project',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.45),
+                        fontSize: 11,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
-            // Bottom elements
-            FadeTransition(
-              opacity: _bottomFade,
-              child: Positioned(
-                bottom: 90,
-                left: 0,
-                right: 0,
-                child: Text(
-                  'PKM-KC 2026 Innovation Project',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white.withOpacity(0.45),
-                    fontSize: 11,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-            ),
-            // Loading dots
+            
+            // Loading dots (Tetap di bawah agar posisinya rapi)
             Positioned(
               bottom: 60,
               left: 0,
@@ -390,16 +385,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
               child: GestureDetector(
                 onTap: () {
                   try {
-                    // Create dummy data using the valid constructor
-                    final dummyHasil = ScreeningModel.demo(
-                      userId: 'demo_user',
-                      lesionLocation: 'Wajah (Hidung, Pipi, Dahi)',
-                      lesionNotes: 'Indikasi Terdeteksi via bypass',
-                      riskLevel: 'high',
-                    );
-
-                    // We can't set active screening directly because the user might not be logged in yet.
-                    // But we can just bypass to dashboard for demo purposes.
                     print("⚡ Bypass splash screen to dashboard!");
                     _hasNavigated = true;
                     widget.navigate('dashboard');

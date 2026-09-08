@@ -1,7 +1,10 @@
+// ignore_for_type: deprecated_member_use
+// ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:intl/intl.dart';
+import '../services/hardware_api_service.dart';
 import '../widgets/bottom_nav.dart';
 import '../providers/auth_provider.dart';
 import '../providers/screening_provider.dart';
@@ -689,6 +692,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                       );
                     }).toList(),
                   ),
+
                   const SizedBox(height: 14),
                   // Health tip
                   Container(

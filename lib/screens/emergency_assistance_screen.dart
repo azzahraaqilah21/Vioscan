@@ -1,6 +1,8 @@
 // ignore_for_type: deprecated_member_use
 // ignore_for_file: deprecated_member_use
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart'; // Wajib untuk telpon & buka maps
+import 'package:geolocator/geolocator.dart'; // Wajib untuk cek lokasi GPS
 import '../widgets/bottom_nav.dart';
 
 class EmergencyAssistanceScreen extends StatefulWidget {
@@ -19,9 +21,9 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
 
   final List<Map<String, dynamic>> hotlines = [
     {'name': 'Gawat Darurat Medis', 'number': '119', 'available': '24 Jam / 7 Hari', 'category': 'Darurat', 'color': const Color(0xFFDC2626), 'bg': const Color(0xFFFEF2F2)},
-    {'name': 'Yayasan Kanker Indonesia', 'number': '1500-331', 'available': 'Sen–Jum 08:00–17:00', 'category': 'Onkologi', 'color': const Color(0xFFD97706), 'bg': const Color(0xFFFFFBEB)},
-    {'name': 'Poli Kulit RSUD / RS Rujukan', 'number': '(021) 500-135', 'available': 'Sen–Sab 08:00–15:00', 'category': 'Dermatologi', 'color': const Color(0xFF0A858C), 'bg': const Color(0xFFE6F7F7)},
-    {'name': 'Hotline Kesehatan Kemenkes RI', 'number': '1500-567', 'available': 'Sen–Jum 07:00–21:00', 'category': 'Kesehatan Kulit', 'color': const Color(0xFF7C3AED), 'bg': const Color(0xFFF5F3FF)},
+    {'name': 'Yayasan Kanker Indonesia', 'number': '1500331', 'available': 'Sen–Jum 08:00–17:00', 'category': 'Onkologi', 'color': const Color(0xFFD97706), 'bg': const Color(0xFFFFFBEB)},
+    {'name': 'Poli Kulit RSUD / RS Rujukan', 'number': '021500135', 'available': 'Sen–Sab 08:00–15:00', 'category': 'Dermatologi', 'color': const Color(0xFF0A858C), 'bg': const Color(0xFFE6F7F7)},
+    {'name': 'Hotline Kesehatan Kemenkes RI', 'number': '1500567', 'available': 'Sen–Jum 07:00–21:00', 'category': 'Kesehatan Kulit', 'color': const Color(0xFF7C3AED), 'bg': const Color(0xFFF5F3FF)},
   ];
 
   final List<String> selfCareTips = [
@@ -30,6 +32,93 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
     'Jangan oleskan krim, obat, atau bahan apapun pada lesi tanpa instruksi dokter',
     'Jaga kebersihan area lesi, hindari menggaruk atau menekan lesi',
   ];
+
+  // ==========================================
+  // FUNGSI PANGGIL TELEPON (EMERGENCY CALL)
+  // ==========================================
+  Future<void> _makePhoneCall(String phoneNumber) async {
+    final Uri launchUri = Uri(
+      scheme: 'tel',
+      path: phoneNumber,
+    );
+    try {
+      if (await canLaunchUrl(launchUri)) {
+        await launchUrl(launchUri);
+      } else {
+        throw 'Could not launch $phoneNumber';
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal melakukan panggilan ke $phoneNumber')),
+      );
+    }
+  }
+
+  // ==========================================
+  // FUNGSI CEK LOKASI & BUKA GOOGLE MAPS KLINIK
+  // ==========================================
+  Future<void> _findNearbyClinics() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // 1. Cek apakah layanan GPS aktif
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Layanan lokasi (GPS) nonaktif. Harap aktifkan.')),
+        );
+      }
+      return;
+    }
+
+    // 2. Cek izin akses lokasi dari pengguna
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Izin akses lokasi ditolak oleh pengguna.')),
+          );
+        }
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Izin lokasi ditolak secara permanen. Ubah di pengaturan HP.')),
+        );
+      }
+      return;
+    }
+
+    // 3. Ambil koordinat saat ini lalu buka Google Maps untuk mencari "Klinik Kulit / Rumah Sakit"
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // Buat URL pencarian Google Maps berdasarkan titik koordinat GPS saat ini
+      final String googleMapsUrl = 
+          'https://www.google.com/maps/search/Klinik+Dermatologi+or+Rumah+Sakit/@${position.latitude},${position.longitude},14z';
+
+      final Uri uri = Uri.parse(googleMapsUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        throw 'Could not open maps.';
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Gagal mendapatkan lokasi GPS terkini.')),
+        );
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -85,9 +174,9 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Emergency Assistance',
-                      style: TextStyle(color: Color(0xFF1F2937), fontSize: 17, fontWeight: FontWeight.w700)),
+                        style: TextStyle(color: Color(0xFF1F2937), fontSize: 17, fontWeight: FontWeight.w700)),
                     Text('Akses cepat bantuan medis',
-                      style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12)),
+                        style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12)),
                   ],
                 ),
               ],
@@ -128,7 +217,7 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text('Protokol Risiko Tinggi BCC',
-                                    style: TextStyle(color: Color(0xFF991B1B), fontWeight: FontWeight.w700, fontSize: 14)),
+                                      style: TextStyle(color: Color(0xFF991B1B), fontWeight: FontWeight.w700, fontSize: 14)),
                                   SizedBox(height: 4),
                                   Text(
                                     'Jika hasil skrining menunjukkan RISIKO TINGGI, segera rujuk pasien ke dokter Spesialis Kulit (SpKK) dalam 1–2 minggu. Deteksi dini meningkatkan tingkat kesembuhan BCC hingga 95% (NCCN 2024).',
@@ -142,11 +231,12 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                       );
                     },
                   ),
-                  // Emergency hotline button
+
+                  // 1. Tombol Utama Hotline Darurat (Menelpon 119)
                   Container(
                     margin: const EdgeInsets.only(bottom: 12),
                     child: GestureDetector(
-                      onTap: () {},
+                      onTap: () => _makePhoneCall('119'), // DIHUBUNGKAN KE FUNGSI TELPON
                       child: Container(
                         padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
@@ -181,9 +271,9 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                                 children: [
                                   Text('Hotline Gawat Darurat', style: TextStyle(color: Colors.white70, fontSize: 11)),
                                   Text('Gawat Darurat Medis 119',
-                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
+                                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
                                   Text('Tersedia 24 jam / 7 hari seminggu',
-                                    style: TextStyle(color: Colors.white60, fontSize: 11.5)),
+                                      style: TextStyle(color: Colors.white60, fontSize: 11.5)),
                                 ],
                               ),
                             ),
@@ -193,11 +283,12 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                       ),
                     ),
                   ),
-                  // Find nearby clinic button
+
+                  // 2. Tombol Cari Klinik Terdekat (Mengaktifkan GPS & Google Maps)
                   Container(
                     margin: const EdgeInsets.only(bottom: 16),
                     child: GestureDetector(
-                      onTap: () {},
+                      onTap: _findNearbyClinics, // DIHUBUNGKAN KE FUNGSI GPS & MAPS
                       child: Container(
                         padding: const EdgeInsets.all(18),
                         decoration: BoxDecoration(
@@ -232,9 +323,9 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                                 children: [
                                   Text('Klinik Dermatologi', style: TextStyle(color: Colors.white70, fontSize: 11)),
                                   Text('Temukan Klinik Terdekat',
-                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
+                                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
                                   Text('Pencari klinik dermatologi terdekat',
-                                    style: TextStyle(color: Colors.white60, fontSize: 11.5)),
+                                      style: TextStyle(color: Colors.white60, fontSize: 11.5)),
                                 ],
                               ),
                             ),
@@ -251,7 +342,8 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                       ),
                     ),
                   ),
-                  // Medical hotlines
+
+                  // Medical hotlines (Bisa diklik juga per item)
                   Container(
                     margin: const EdgeInsets.only(bottom: 14),
                     decoration: BoxDecoration(
@@ -267,76 +359,80 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                           child: Align(
                             alignment: Alignment.centerLeft,
                             child: Text('Hotline Medis',
-                              style: TextStyle(color: Color(0xFF1F2937), fontSize: 14.5, fontWeight: FontWeight.w700)),
+                                style: TextStyle(color: Color(0xFF1F2937), fontSize: 14.5, fontWeight: FontWeight.w700)),
                           ),
                         ),
                         ...hotlines.asMap().entries.map((e) {
                           final h = e.value;
-                          return Column(
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 42, height: 42,
-                                      decoration: BoxDecoration(
-                                        color: h['bg'] as Color,
-                                        borderRadius: BorderRadius.circular(14),
+                          return InkWell(
+                            onTap: () => _makePhoneCall(h['number'] as String), // Bisa diklik untuk langsung telpon
+                            child: Column(
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 42, height: 42,
+                                        decoration: BoxDecoration(
+                                          color: h['bg'] as Color,
+                                          borderRadius: BorderRadius.circular(14),
+                                        ),
+                                        child: Icon(Icons.phone_rounded, color: h['color'] as Color, size: 17),
                                       ),
-                                      child: Icon(Icons.phone_rounded, color: h['color'] as Color, size: 17),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(h['name'] as String,
-                                            style: const TextStyle(color: Color(0xFF1F2937), fontSize: 13, fontWeight: FontWeight.w600)),
-                                          Row(
-                                            children: [
-                                              Text(h['number'] as String,
-                                                style: TextStyle(color: h['color'] as Color, fontSize: 12.5, fontWeight: FontWeight.w700)),
-                                              const SizedBox(width: 6),
-                                              Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                  color: h['bg'] as Color,
-                                                  borderRadius: BorderRadius.circular(100),
-                                                ),
-                                                child: Text(h['category'] as String,
-                                                  style: TextStyle(color: h['color'] as Color, fontSize: 9.5, fontWeight: FontWeight.w700)),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    Column(
-                                      crossAxisAlignment: CrossAxisAlignment.end,
-                                      children: [
-                                        Row(
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            const Icon(Icons.access_time_rounded, color: Color(0xFF94A3B8), size: 10),
-                                            const SizedBox(width: 4),
-                                            Text(h['available'] as String,
-                                              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+                                            Text(h['name'] as String,
+                                                style: const TextStyle(color: Color(0xFF1F2937), fontSize: 13, fontWeight: FontWeight.w600)),
+                                            Row(
+                                              children: [
+                                                Text(h['number'] as String,
+                                                    style: TextStyle(color: h['color'] as Color, fontSize: 12.5, fontWeight: FontWeight.w700)),
+                                                const SizedBox(width: 6),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                  decoration: BoxDecoration(
+                                                    color: h['bg'] as Color,
+                                                    borderRadius: BorderRadius.circular(100),
+                                                  ),
+                                                  child: Text(h['category'] as String,
+                                                      style: TextStyle(color: h['color'] as Color, fontSize: 9.5, fontWeight: FontWeight.w700)),
+                                                ),
+                                              ],
+                                            ),
                                           ],
                                         ),
-                                        const Icon(Icons.chevron_right_rounded, color: Color(0xFFD1D5DB), size: 14),
-                                      ],
-                                    ),
-                                  ],
+                                      ),
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              const Icon(Icons.access_time_rounded, color: Color(0xFF94A3B8), size: 10),
+                                              const SizedBox(width: 4),
+                                              Text(h['available'] as String,
+                                                  style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10)),
+                                            ],
+                                          ),
+                                          const Icon(Icons.chevron_right_rounded, color: Color(0xFFD1D5DB), size: 14),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              if (e.key < hotlines.length - 1)
-                                const Divider(height: 1, color: Color(0xFFF9FAFB)),
-                            ],
+                                if (e.key < hotlines.length - 1)
+                                  const Divider(height: 1, color: Color(0xFFF9FAFB)),
+                              ],
+                            ),
                           );
                         }),
                       ],
                     ),
                   ),
+
                   // Self-care tips
                   Container(
                     padding: const EdgeInsets.all(16),
@@ -361,7 +457,7 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                             ),
                             const SizedBox(width: 8),
                             const Text('Panduan Sementara untuk Pasien',
-                              style: TextStyle(color: Color(0xFF1F2937), fontSize: 14.5, fontWeight: FontWeight.w700)),
+                                style: TextStyle(color: Color(0xFF1F2937), fontSize: 14.5, fontWeight: FontWeight.w700)),
                           ],
                         ),
                         const SizedBox(height: 14),
@@ -379,13 +475,13 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                                   ),
                                   child: Center(
                                     child: Text('${e.key + 1}',
-                                      style: const TextStyle(color: Color(0xFF0A858C), fontSize: 10, fontWeight: FontWeight.w800)),
+                                        style: const TextStyle(color: Color(0xFF0A858C), fontSize: 10, fontWeight: FontWeight.w800)),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
                                 Expanded(
                                   child: Text(e.value,
-                                    style: const TextStyle(color: Color(0xFF4B5563), fontSize: 12.5, height: 1.5)),
+                                      style: const TextStyle(color: Color(0xFF4B5563), fontSize: 12.5, height: 1.5)),
                                 ),
                               ],
                             ),
@@ -394,6 +490,7 @@ class _EmergencyAssistanceScreenState extends State<EmergencyAssistanceScreen>
                       ],
                     ),
                   ),
+
                   // Disclaimer
                   Container(
                     padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
